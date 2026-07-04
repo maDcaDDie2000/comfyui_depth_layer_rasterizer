@@ -2,7 +2,7 @@
 
 import torch
 
-from rasterizer.pipeline import depth_rasterize_layers
+from rasterizer.pipeline import depth_rasterize_layers  # noqa: E402 — conftest adds repo root
 
 
 def _gradient_depth(batch: int, height: int, width: int) -> torch.Tensor:

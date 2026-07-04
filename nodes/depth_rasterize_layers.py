@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from rasterizer.pipeline import depth_rasterize_layers
+from ..rasterizer.pipeline import depth_rasterize_layers
 
 
 def _normalize_optional_mask(mask: torch.Tensor | None) -> torch.Tensor | None:
