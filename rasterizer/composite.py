@@ -65,6 +65,15 @@ def render_composite_frame(
         for layer_index in order:
             mask = masks[batch_idx, layer_index]
             layer_rgb = color_layers[batch_idx, layer_index]
+            layer_active = mask > 1e-6
+            # Composite uses straight RGB with hard opacity per assigned pixel so soft-mask
+            # feathering (for layer exports) does not leave black gaps in the stack.
+            alpha = layer_active.float().unsqueeze(-1)
+            straight_rgb = torch.where(
+                layer_active.unsqueeze(-1),
+                layer_rgb / mask.unsqueeze(-1).clamp(min=1e-6),
+                torch.zeros_like(layer_rgb),
+            )
 
             if enable_layer_offset:
                 dx, dy = compute_layer_offset(
@@ -76,8 +85,9 @@ def render_composite_frame(
                     manual_offset_x,
                     manual_offset_y,
                 )
-                layer_rgb = shift_image(layer_rgb.unsqueeze(0), dx, dy).squeeze(0)
-                mask = shift_image(mask.unsqueeze(-1).unsqueeze(0), dx, dy).squeeze(0).squeeze(-1)
+                straight_rgb = shift_image(straight_rgb.unsqueeze(0), dx, dy).squeeze(0)
+                alpha = shift_image(alpha.unsqueeze(0), dx, dy).squeeze(0)
+                mask = alpha.squeeze(-1)
 
             if enable_shadow:
                 shadow_rgb = create_shadow_layer(
@@ -103,15 +113,14 @@ def render_composite_frame(
                     outline_width,
                     outline_mode,
                 ).squeeze(0)
-                layer_rgb = apply_outline_to_layer(
-                    layer_rgb.unsqueeze(0),
+                straight_rgb = apply_outline_to_layer(
+                    straight_rgb.unsqueeze(0),
                     outline.unsqueeze(0),
                     outline_color,
                     outline_opacity,
                 ).squeeze(0)
 
-            alpha = mask.unsqueeze(-1)
-            canvas = alpha_composite_over(canvas, layer_rgb, alpha)
+            canvas = alpha_composite_over(canvas, straight_rgb, alpha)
 
         results.append(canvas)
 

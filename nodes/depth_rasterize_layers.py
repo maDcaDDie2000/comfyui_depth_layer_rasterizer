@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 
 from ..rasterizer.pipeline import depth_rasterize_layers
+from .tooltips import NODE_DESCRIPTION, OUTPUT_TOOLTIPS, build_depth_rasterize_input_types
 
 
 def _normalize_optional_mask(mask: torch.Tensor | None) -> torch.Tensor | None:
@@ -26,111 +27,18 @@ class NullDepthModel:
     RETURN_NAMES = ("depth_model",)
     FUNCTION = "execute"
     CATEGORY = "depth/layers"
+    DESCRIPTION = "Outputs an empty DEPTH_MODEL handle. Connect when your workflow supplies depth via depth_map only."
 
     def execute(self):
         return (None,)
 
 
 class DepthRasterizeLayers:
-    """
-    Depth Rasterize Layers — quantize depth into color-preserved slices with optional
-    outline, shadow, and parallax composite effects.
-    """
+    """Quantize depth into slices with optional flat or posterized color fills."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image": ("IMAGE",),
-                "rasterization_levels": (
-                    "INT",
-                    {"default": 16, "min": 2, "max": 64, "step": 1},
-                ),
-                "output_mode": (
-                    [
-                        "all_layers",
-                        "single_layer",
-                        "composite",
-                        "masks_only",
-                        "debug",
-                    ],
-                ),
-            },
-            "optional": {
-                "depth_model": ("DEPTH_MODEL",),
-                "depth_map": ("IMAGE",),
-                "region_mask": ("MASK",),
-                "background": ("IMAGE",),
-                "selected_layer": (
-                    "INT",
-                    {"default": 0, "min": 0, "max": 63, "step": 1},
-                ),
-                "invert_depth": ("BOOLEAN", {"default": False}),
-                "auto_normalize_depth": ("BOOLEAN", {"default": True}),
-                "depth_min": ("FLOAT", {"default": 0.0, "min": -1e6, "max": 1e6, "step": 0.001}),
-                "depth_max": ("FLOAT", {"default": 1.0, "min": -1e6, "max": 1e6, "step": 0.001}),
-                "normalization_mode": (["per_frame", "whole_sequence", "manual"],),
-                "depth_gamma": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.1, "max": 4.0, "step": 0.05},
-                ),
-                "depth_blur": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 32.0, "step": 0.5},
-                ),
-                "temporal_smoothing": (
-                    "FLOAT",
-                    {"default": 0.0, "min": 0.0, "max": 0.99, "step": 0.01},
-                ),
-                "mask_feather": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 32.0, "step": 0.5},
-                ),
-                "soft_masks": ("BOOLEAN", {"default": True}),
-                "mask_expand": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
-                "mask_erode": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
-                "remove_small_islands": ("BOOLEAN", {"default": True}),
-                "island_min_size": ("INT", {"default": 32, "min": 1, "max": 4096, "step": 1}),
-                "layer_order": (["near_to_far", "far_to_near"],),
-                "enable_outline": ("BOOLEAN", {"default": False}),
-                "outline_width": ("INT", {"default": 2, "min": 1, "max": 32, "step": 1}),
-                "outline_opacity": (
-                    "FLOAT",
-                    {"default": 0.75, "min": 0.0, "max": 1.0, "step": 0.05},
-                ),
-                "outline_mode": (["outer", "inner", "centered", "depth_boundary"],),
-                "outline_color_r": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "outline_color_g": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "outline_color_b": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "enable_shadow": ("BOOLEAN", {"default": False}),
-                "shadow_distance": (
-                    "FLOAT",
-                    {"default": 8.0, "min": 0.0, "max": 128.0, "step": 1.0},
-                ),
-                "shadow_angle": (
-                    "FLOAT",
-                    {"default": 135.0, "min": 0.0, "max": 360.0, "step": 1.0},
-                ),
-                "shadow_blur": (
-                    "FLOAT",
-                    {"default": 6.0, "min": 0.0, "max": 64.0, "step": 1.0},
-                ),
-                "shadow_opacity": (
-                    "FLOAT",
-                    {"default": 0.35, "min": 0.0, "max": 1.0, "step": 0.05},
-                ),
-                "shadow_color_r": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "shadow_color_g": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "shadow_color_b": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "depth_scaled_shadow": ("BOOLEAN", {"default": True}),
-                "enable_layer_offset": ("BOOLEAN", {"default": False}),
-                "offset_x": ("FLOAT", {"default": 0.0, "min": -256.0, "max": 256.0, "step": 1.0}),
-                "offset_y": ("FLOAT", {"default": 0.0, "min": -256.0, "max": 256.0, "step": 1.0}),
-                "offset_mode": (["uniform", "depth_scaled", "manual"],),
-                "manual_offset_x": ("FLOAT", {"default": 0.0, "min": -256.0, "max": 256.0, "step": 1.0}),
-                "manual_offset_y": ("FLOAT", {"default": 0.0, "min": -256.0, "max": 256.0, "step": 1.0}),
-            },
-        }
+        return build_depth_rasterize_input_types()
 
     RETURN_TYPES = ("IMAGE", "MASK", "IMAGE", "IMAGE", "IMAGE")
     RETURN_NAMES = (
@@ -140,8 +48,10 @@ class DepthRasterizeLayers:
         "composited_image",
         "debug_preview",
     )
+    OUTPUT_TOOLTIPS = OUTPUT_TOOLTIPS
     FUNCTION = "process"
     CATEGORY = "depth/layers"
+    DESCRIPTION = NODE_DESCRIPTION
 
     def process(
         self,
@@ -161,6 +71,10 @@ class DepthRasterizeLayers:
         depth_gamma=1.0,
         depth_blur=1.0,
         temporal_smoothing=0.0,
+        layer_smoothing=0.0,
+        layer_color_mode="original",
+        color_zones_per_layer=4,
+        color_zone_space="luminance_chroma",
         mask_feather=1.0,
         soft_masks=True,
         mask_expand=0,
@@ -215,6 +129,10 @@ class DepthRasterizeLayers:
             depth_gamma=depth_gamma,
             depth_blur=depth_blur,
             temporal_smoothing=temporal_smoothing,
+            layer_smoothing=layer_smoothing,
+            layer_color_mode=layer_color_mode,
+            color_zones_per_layer=color_zones_per_layer,
+            color_zone_space=color_zone_space,
             mask_feather=mask_feather,
             soft_masks=soft_masks,
             mask_expand=mask_expand,

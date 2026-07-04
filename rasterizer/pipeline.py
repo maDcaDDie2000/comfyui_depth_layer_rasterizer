@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional, Sequence
 
 import torch
 
+from .color_layers import apply_layer_color_mode
 from .composite import (
     apply_outlines_to_layers,
     false_color_debug_preview,
@@ -14,7 +15,6 @@ from .composite import (
 )
 from .depth import (
     compute_depth_range,
-    depth_to_layer_ids,
     gaussian_blur_depth,
     image_to_depth,
     layer_ids_to_quantized_image,
@@ -23,7 +23,12 @@ from .depth import (
     sanitize_depth,
     temporal_smooth_depth,
 )
-from .masks import create_layer_masks, extract_color_layers, process_layer_masks
+from .masks import (
+    create_layer_masks,
+    extract_color_layers,
+    process_layer_masks,
+    smooth_layer_assignments,
+)
 
 
 DepthPredictFn = Callable[[torch.Tensor], torch.Tensor]
@@ -63,6 +68,7 @@ def depth_rasterize_layers(
     depth_gamma: float = 1.0,
     depth_blur: float = 1.0,
     temporal_smoothing: float = 0.0,
+    layer_smoothing: float = 0.0,
     mask_feather: float = 1.0,
     soft_masks: bool = True,
     mask_expand: int = 0,
@@ -90,6 +96,9 @@ def depth_rasterize_layers(
     offset_mode: str = "depth_scaled",
     manual_offset_x: float = 0.0,
     manual_offset_y: float = 0.0,
+    layer_color_mode: str = "original",
+    color_zones_per_layer: int = 4,
+    color_zone_space: str = "luminance_chroma",
 ) -> dict[str, torch.Tensor]:
     """
     Rasterize depth into color-preserved layers.
@@ -157,10 +166,14 @@ def depth_rasterize_layers(
         depth_norm = temporal_smooth_depth(depth_norm, previous_depth, temporal_smoothing)
         previous_depth = depth_norm.detach()
 
-        layer_id = depth_to_layer_ids(depth_norm, rasterization_levels)
+        depth_for_layers, layer_id = smooth_layer_assignments(
+            depth_norm,
+            rasterization_levels,
+            layer_smoothing,
+        )
         masks = create_layer_masks(
             layer_id,
-            depth_norm,
+            depth_for_layers,
             rasterization_levels,
             mask_feather,
             soft_masks,
@@ -185,6 +198,14 @@ def depth_rasterize_layers(
 
         frame_image = image_batch[frame_idx : frame_idx + 1]
         color_layers = extract_color_layers(frame_image, masks)
+        color_layers = apply_layer_color_mode(
+            color_layers,
+            masks,
+            frame_image,
+            layer_color_mode,
+            color_zones_per_layer,
+            color_zone_space,
+        )
 
         if enable_outline and output_mode in ("all_layers", "single_layer"):
             color_layers = apply_outlines_to_layers(

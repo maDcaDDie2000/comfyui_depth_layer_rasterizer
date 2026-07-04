@@ -24,6 +24,51 @@ def create_binary_layer_masks(layer_id: torch.Tensor, rasterization_levels: int)
     return (layer_id.unsqueeze(1) == levels.view(1, -1, 1, 1)).float()
 
 
+def majority_filter_layer_ids(
+    layer_id: torch.Tensor,
+    rasterization_levels: int,
+    radius: int,
+) -> torch.Tensor:
+    """
+    Replace each pixel's layer with the most common layer in a local window.
+
+    Merges fine speckle and jagged micro-detail into smoother region boundaries.
+    """
+    if radius <= 0:
+        return layer_id
+
+    kernel = radius * 2 + 1
+    one_hot = F.one_hot(layer_id.long().clamp(0, rasterization_levels - 1), rasterization_levels)
+    one_hot = one_hot.permute(0, 3, 1, 2).float()
+    votes = F.avg_pool2d(one_hot, kernel_size=kernel, stride=1, padding=radius)
+    return votes.argmax(dim=1).to(layer_id.dtype)
+
+
+def smooth_layer_assignments(
+    depth_norm: torch.Tensor,
+    rasterization_levels: int,
+    layer_smoothing: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Soften layer boundaries by blurring normalized depth before quantization,
+    then optionally merging isolated layer specks via a local majority filter.
+    """
+    if layer_smoothing <= 0:
+        from .depth import depth_to_layer_ids
+
+        layer_id = depth_to_layer_ids(depth_norm, rasterization_levels)
+        return depth_norm, layer_id
+
+    from .depth import depth_to_layer_ids, gaussian_blur_depth
+
+    depth_for_layers = gaussian_blur_depth(depth_norm, layer_smoothing)
+    layer_id = depth_to_layer_ids(depth_for_layers, rasterization_levels)
+
+    mode_radius = max(1, min(8, int(round(layer_smoothing * 0.5))))
+    layer_id = majority_filter_layer_ids(layer_id, rasterization_levels, mode_radius)
+    return depth_for_layers, layer_id
+
+
 def create_soft_layer_masks(
     depth_norm: torch.Tensor,
     rasterization_levels: int,
