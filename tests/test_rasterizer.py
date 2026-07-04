@@ -1,8 +1,20 @@
 """Tests for depth layer rasterization."""
 
+import importlib.util
+from pathlib import Path
+
 import torch
 
-from rasterizer.pipeline import depth_rasterize_layers  # noqa: E402 — conftest adds repo root
+from rasterizer.pipeline import depth_rasterize_layers  # noqa: E402 - conftest adds repo root
+
+_TOOLTIPS_SPEC = importlib.util.spec_from_file_location(
+    "depth_layer_tooltips",
+    Path(__file__).resolve().parents[1] / "nodes" / "tooltips.py",
+)
+_TOOLTIPS = importlib.util.module_from_spec(_TOOLTIPS_SPEC)
+assert _TOOLTIPS_SPEC.loader is not None
+_TOOLTIPS_SPEC.loader.exec_module(_TOOLTIPS)
+build_depth_rasterize_input_types = _TOOLTIPS.build_depth_rasterize_input_types
 
 
 def _gradient_depth(batch: int, height: int, width: int) -> torch.Tensor:
@@ -80,23 +92,6 @@ def test_composite_matches_input_brightness():
         depth_blur=0.0,
     )
     assert result["composited_image"].mean() > 0.6
-
-
-def test_depth_model_callable():
-    image = torch.rand(1, 16, 16, 3)
-
-    def model(imgs):
-        del imgs
-        return _gradient_depth(1, 16, 16)
-
-    result = depth_rasterize_layers(
-        image,
-        rasterization_levels=3,
-        depth_model=model,
-        output_mode="single_layer",
-        selected_layer=0,
-    )
-    assert result["layer_masks"].shape == (1, 16, 16)
 
 
 def test_flat_average_layer_color():
@@ -184,3 +179,109 @@ def test_layer_smoothing_reduces_boundary_noise():
         depth_blur=0.0,
     )
     assert boundary_count(smooth["layer_masks"]) < boundary_count(sharp["layer_masks"])
+
+
+def test_composite_shadow_visible():
+    image = torch.rand(1, 64, 64, 3)
+    depth_map = torch.linspace(0, 1, 64).view(1, 1, 64).expand(1, 64, 64).unsqueeze(-1).expand(-1, -1, -1, 3)
+    without = depth_rasterize_layers(
+        image,
+        rasterization_levels=8,
+        depth_map=depth_map,
+        output_mode="composite",
+        enable_shadow=False,
+        soft_masks=False,
+        depth_blur=0.0,
+    )
+    with_shadow = depth_rasterize_layers(
+        image,
+        rasterization_levels=8,
+        depth_map=depth_map,
+        output_mode="composite",
+        enable_shadow=True,
+        shadow_distance=10.0,
+        shadow_opacity=0.6,
+        depth_scaled_shadow=False,
+        soft_masks=False,
+        depth_blur=0.0,
+    )
+    assert with_shadow["composited_image"].mean() < without["composited_image"].mean()
+
+
+def test_black_white_layer_color_mode():
+    image = torch.zeros(1, 8, 8, 3)
+    image[:, :, :4, :] = 0.25
+    image[:, :, 4:, :] = 0.75
+    depth_map = torch.full((1, 8, 8), 0.3).unsqueeze(-1).expand(-1, -1, -1, 3)
+
+    result = depth_rasterize_layers(
+        image,
+        rasterization_levels=2,
+        depth_map=depth_map,
+        output_mode="single_layer",
+        selected_layer=1,
+        layer_color_mode="black_white",
+        black_white_threshold=0.5,
+        soft_masks=False,
+        depth_blur=0.0,
+    )
+
+    layer = result["layered_images"][0]
+    assert layer[:, :4].max() == 0
+    assert layer[:, 4:].min() == 1
+
+
+def test_color_adjustments_apply_inside_layer_mask():
+    image = torch.full((1, 8, 8, 3), 0.4)
+    depth_map = torch.full((1, 8, 8), 0.3).unsqueeze(-1).expand(-1, -1, -1, 3)
+
+    result = depth_rasterize_layers(
+        image,
+        rasterization_levels=2,
+        depth_map=depth_map,
+        output_mode="single_layer",
+        selected_layer=1,
+        layer_color_mode="flat_average",
+        color_brightness=0.2,
+        soft_masks=False,
+        depth_blur=0.0,
+    )
+
+    assert torch.allclose(result["layered_images"][0, 4, 4], torch.full((3,), 0.6), atol=1e-5)
+
+
+def test_manual_depth_range_uses_normalization_mode_only():
+    image = torch.ones(1, 8, 8, 3)
+    depth_map = torch.full((1, 8, 8), 0.75).unsqueeze(-1).expand(-1, -1, -1, 3)
+
+    result = depth_rasterize_layers(
+        image,
+        rasterization_levels=4,
+        depth_map=depth_map,
+        output_mode="single_layer",
+        selected_layer=3,
+        normalization_mode="manual",
+        depth_min=0.0,
+        depth_max=1.0,
+        soft_masks=False,
+        depth_blur=0.0,
+    )
+
+    assert result["layer_masks"].sum() == 64
+
+
+def test_node_ui_hides_internal_cleanup_knobs():
+    optional = build_depth_rasterize_input_types()["optional"]
+    hidden = {
+        "auto_normalize_depth",
+        "soft_masks",
+        "mask_expand",
+        "mask_erode",
+        "layer_order",
+        "outline_mode",
+        "offset_mode",
+        "color_zone_space",
+    }
+    assert hidden.isdisjoint(optional)
+    assert "black_white" in optional["layer_color_mode"][0]
+    assert "color_brightness" in optional

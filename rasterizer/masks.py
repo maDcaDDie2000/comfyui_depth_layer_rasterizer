@@ -139,50 +139,13 @@ def apply_region_mask(masks: torch.Tensor, region: torch.Tensor) -> torch.Tensor
     return masks * region.unsqueeze(1)
 
 
-def remove_small_islands(masks: torch.Tensor, min_size: int) -> torch.Tensor:
-    """Drop connected components smaller than min_size (OpenCV when available)."""
-    if min_size <= 1:
-        return masks
-
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        return masks
-
-    cleaned = masks.clone()
-    b, levels, h, w = cleaned.shape
-
-    for batch_idx in range(b):
-        for level_idx in range(levels):
-            component = cleaned[batch_idx, level_idx]
-            binary = (component > 0.5).cpu().numpy().astype(np.uint8)
-            if binary.max() == 0:
-                continue
-
-            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-            keep = np.zeros_like(binary, dtype=np.float32)
-            for label_idx in range(1, num_labels):
-                if stats[label_idx, cv2.CC_STAT_AREA] >= min_size:
-                    keep[labels == label_idx] = 1.0
-
-            cleaned[batch_idx, level_idx] = torch.from_numpy(keep).to(
-                device=component.device,
-                dtype=component.dtype,
-            )
-
-    return cleaned
-
-
 def process_layer_masks(
     masks: torch.Tensor,
     region_mask: torch.Tensor | None,
     mask_expand: int,
     mask_erode: int,
-    remove_islands: bool,
-    island_min_size: int,
 ) -> torch.Tensor:
-    """Apply morphological and cleanup operations to layer masks."""
+    """Apply morphological operations to layer masks."""
     if region_mask is not None:
         masks = apply_region_mask(masks, region_mask)
 
@@ -191,9 +154,6 @@ def process_layer_masks(
 
     if mask_erode > 0:
         masks = morph_erode(masks, mask_erode)
-
-    if remove_islands:
-        masks = remove_small_islands(masks, island_min_size)
 
     return masks.clamp(0.0, 1.0)
 

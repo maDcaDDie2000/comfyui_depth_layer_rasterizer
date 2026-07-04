@@ -46,13 +46,10 @@ def render_composite_frame(
     offset_x: float,
     offset_y: float,
     offset_mode: str,
-    manual_offset_x: float,
-    manual_offset_y: float,
     layer_order: str,
 ) -> torch.Tensor:
     """Composite all layers for one batch item paths handled per frame in B dim."""
     b, levels, h, w, _ = color_layers.shape
-    del layer_id  # reserved for future per-layer boundary outlines
 
     results = []
     for batch_idx in range(b):
@@ -82,15 +79,13 @@ def render_composite_frame(
                     offset_x,
                     offset_y,
                     offset_mode,
-                    manual_offset_x,
-                    manual_offset_y,
                 )
                 straight_rgb = shift_image(straight_rgb.unsqueeze(0), dx, dy).squeeze(0)
                 alpha = shift_image(alpha.unsqueeze(0), dx, dy).squeeze(0)
                 mask = alpha.squeeze(-1)
 
             if enable_shadow:
-                shadow_rgb = create_shadow_layer(
+                shadow_rgb, shadow_alpha = create_shadow_layer(
                     mask.unsqueeze(0),
                     layer_index,
                     rasterization_levels,
@@ -100,16 +95,15 @@ def render_composite_frame(
                     shadow_opacity,
                     shadow_color,
                     depth_scaled_shadow,
-                    h,
-                    w,
-                ).squeeze(0)
-                shadow_alpha = shadow_rgb.max(dim=-1, keepdim=True).values.clamp(0.0, 1.0)
+                )
+                shadow_rgb = shadow_rgb.squeeze(0)
+                shadow_alpha = shadow_alpha.squeeze(0)
                 canvas = alpha_composite_over(canvas, shadow_rgb, shadow_alpha)
 
             if enable_outline:
                 outline = create_outline_mask(
                     mask.unsqueeze(0),
-                    None,
+                    layer_id[batch_idx : batch_idx + 1] if outline_mode == "depth_boundary" else None,
                     outline_width,
                     outline_mode,
                 ).squeeze(0)

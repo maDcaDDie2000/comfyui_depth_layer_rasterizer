@@ -88,7 +88,12 @@ def compute_depth_range(
     sequence_depth: Optional[torch.Tensor] = None,
 ) -> tuple[float, float]:
     """Resolve min/max depth used for normalization."""
-    if not auto_normalize and normalization_mode == "manual":
+    if normalization_mode == "manual":
+        d_min = 0.0 if depth_min is None else float(depth_min)
+        d_max = 1.0 if depth_max is None else float(depth_max)
+        return d_min, d_max
+
+    if not auto_normalize:
         d_min = 0.0 if depth_min is None else float(depth_min)
         d_max = 1.0 if depth_max is None else float(depth_max)
         return d_min, d_max

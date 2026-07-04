@@ -119,24 +119,25 @@ def create_shadow_layer(
     shadow_opacity: float,
     shadow_color: Sequence[float],
     depth_scaled_shadow: bool,
-    height: int,
-    width: int,
-) -> torch.Tensor:
-    """Render shadow RGBA contribution [B, H, W, 3]."""
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return straight shadow RGB [B, H, W, 3] and alpha [B, H, W, 1]."""
     angle_rad = math.radians(shadow_angle)
     dx = math.cos(angle_rad) * shadow_distance
     dy = math.sin(angle_rad) * shadow_distance
 
     if depth_scaled_shadow and rasterization_levels > 1:
-        depth_factor = layer_index / (rasterization_levels - 1)
+        depth_factor = (layer_index + 1) / rasterization_levels
         dx *= depth_factor
         dy *= depth_factor
 
     shifted = translate_mask(mask, dx, dy)
     blurred = gaussian_blur_mask(shifted, shadow_blur)
+    alpha = (blurred * shadow_opacity).clamp(0.0, 1.0).unsqueeze(-1)
+
     color = _color_tensor(shadow_color, mask.device, mask.dtype)
-    alpha = blurred.unsqueeze(-1) * shadow_opacity
-    return color * alpha
+    b, h, w, _ = alpha.shape
+    rgb = color.expand(b, h, w, 3)
+    return rgb, alpha
 
 
 def compute_layer_offset(
@@ -145,15 +146,10 @@ def compute_layer_offset(
     offset_x: float,
     offset_y: float,
     offset_mode: str,
-    manual_offset_x: float,
-    manual_offset_y: float,
 ) -> tuple[float, float]:
     """Return pixel offset for parallax shifting."""
     if offset_mode == "uniform":
         return offset_x, offset_y
-
-    if offset_mode == "manual":
-        return manual_offset_x, manual_offset_y
 
     if rasterization_levels <= 1:
         return 0.0, 0.0

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Sequence
+from typing import Optional, Sequence
 
 import torch
 
@@ -31,33 +31,10 @@ from .masks import (
 )
 
 
-DepthPredictFn = Callable[[torch.Tensor], torch.Tensor]
-
-
-def predict_depth_from_model(depth_model: Any, images: torch.Tensor) -> torch.Tensor:
-    """Invoke a DEPTH_MODEL handle or callable on an image batch."""
-    if depth_model is None:
-        raise ValueError("depth_model is required when depth_map is not provided")
-
-    if hasattr(depth_model, "predict"):
-        depth = depth_model.predict(images)
-    elif callable(depth_model):
-        depth = depth_model(images)
-    elif isinstance(depth_model, dict) and callable(depth_model.get("predict")):
-        depth = depth_model["predict"](images)
-    else:
-        raise TypeError("depth_model must be callable or expose a .predict(images) method")
-
-    if depth.ndim == 4:
-        depth = depth.mean(dim=-1)
-    return depth.float()
-
-
 def depth_rasterize_layers(
     image_batch: torch.Tensor,
+    depth_map: torch.Tensor,
     rasterization_levels: int = 16,
-    depth_model: Any = None,
-    depth_map: Optional[torch.Tensor] = None,
     region_mask: Optional[torch.Tensor] = None,
     background: Optional[torch.Tensor] = None,
     invert_depth: bool = False,
@@ -73,9 +50,7 @@ def depth_rasterize_layers(
     soft_masks: bool = True,
     mask_expand: int = 0,
     mask_erode: int = 0,
-    remove_small_islands: bool = True,
-    island_min_size: int = 32,
-    output_mode: str = "all_layers",
+    output_mode: str = "composite",
     selected_layer: int = 0,
     layer_order: str = "near_to_far",
     enable_outline: bool = False,
@@ -94,11 +69,13 @@ def depth_rasterize_layers(
     offset_x: float = 0.0,
     offset_y: float = 0.0,
     offset_mode: str = "depth_scaled",
-    manual_offset_x: float = 0.0,
-    manual_offset_y: float = 0.0,
     layer_color_mode: str = "original",
     color_zones_per_layer: int = 4,
     color_zone_space: str = "luminance_chroma",
+    color_brightness: float = 0.0,
+    color_contrast: float = 1.0,
+    color_saturation: float = 1.0,
+    black_white_threshold: float = 0.5,
 ) -> dict[str, torch.Tensor]:
     """
     Rasterize depth into color-preserved layers.
@@ -112,16 +89,16 @@ def depth_rasterize_layers(
     device = image_batch.device
     dtype = image_batch.dtype
 
-    if depth_map is not None:
-        depth = image_to_depth(depth_map)
-        if depth.shape[0] == 1 and batch_size > 1:
-            depth = depth.expand(batch_size, -1, -1)
-        elif depth.shape[0] != batch_size:
-            raise ValueError(
-                f"depth_map batch ({depth.shape[0]}) must match image batch ({batch_size}) or be 1"
-            )
-    else:
-        depth = predict_depth_from_model(depth_model, image_batch)
+    if depth_map is None:
+        raise ValueError("depth_map is required")
+
+    depth = image_to_depth(depth_map)
+    if depth.shape[0] == 1 and batch_size > 1:
+        depth = depth.expand(batch_size, -1, -1)
+    elif depth.shape[0] != batch_size:
+        raise ValueError(
+            f"depth_map batch ({depth.shape[0]}) must match image batch ({batch_size}) or be 1"
+        )
 
     depth = resize_depth_to_match(depth, height, width)
     depth = sanitize_depth(depth)
@@ -129,7 +106,6 @@ def depth_rasterize_layers(
     if depth_blur > 0:
         depth = gaussian_blur_depth(depth, depth_blur)
 
-    sequence_source = depth if normalization_mode == "whole_sequence" else None
     if normalization_mode == "whole_sequence":
         seq_min, seq_max = compute_depth_range(
             depth,
@@ -145,7 +121,6 @@ def depth_rasterize_layers(
     all_layers: list[torch.Tensor] = []
     all_masks: list[torch.Tensor] = []
     all_layer_ids: list[torch.Tensor] = []
-    all_depth_norm: list[torch.Tensor] = []
     composites: list[torch.Tensor] = []
 
     for frame_idx in range(batch_size):
@@ -192,8 +167,6 @@ def depth_rasterize_layers(
             region_frame,
             mask_expand,
             mask_erode,
-            remove_small_islands,
-            island_min_size,
         )
 
         frame_image = image_batch[frame_idx : frame_idx + 1]
@@ -205,6 +178,10 @@ def depth_rasterize_layers(
             layer_color_mode,
             color_zones_per_layer,
             color_zone_space,
+            color_brightness,
+            color_contrast,
+            color_saturation,
+            black_white_threshold,
         )
 
         if enable_outline and output_mode in ("all_layers", "single_layer"):
@@ -245,8 +222,6 @@ def depth_rasterize_layers(
                 offset_x,
                 offset_y,
                 offset_mode,
-                manual_offset_x,
-                manual_offset_y,
                 layer_order,
             )
             composites.append(composite)
@@ -254,13 +229,10 @@ def depth_rasterize_layers(
         all_layers.append(color_layers)
         all_masks.append(masks)
         all_layer_ids.append(layer_id)
-        all_depth_norm.append(depth_norm)
 
     layers_stack = torch.cat(all_layers, dim=0)
     masks_stack = torch.cat(all_masks, dim=0)
     layer_id_stack = torch.cat(all_layer_ids, dim=0)
-    depth_norm_stack = torch.cat(all_depth_norm, dim=0)
-
     depth_quantized = layer_ids_to_quantized_image(layer_id_stack, rasterization_levels)
     debug_preview = false_color_debug_preview(layer_id_stack, rasterization_levels)
 

@@ -1,12 +1,12 @@
 [project]
 name = "comfyui-depth-layer-rasterizer"
 version = "0.1.0"
-description = "Quantize depth into color-preserved layers for paper-cut and parallax effects in ComfyUI"
+description = "Depth-map paper-cut and parallax layer rasterizer for ComfyUI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "torch>=2.0.0",
     "numpy>=1.24.0",
-    "opencv-python-headless>=4.8.0",
 ]
 
 [tool.comfy]

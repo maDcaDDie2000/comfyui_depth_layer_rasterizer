@@ -1,15 +1,12 @@
 # ComfyUI Depth Layer Rasterizer
 
-ComfyUI custom nodes that quantize depth into discrete layers for paper-cut, parallax, and diorama effects. Each depth slice can keep original colors, fill with one flat average, or posterize into **color zones** (flat patches within the slice).
+A ComfyUI custom node for turning an image or video frame batch plus a depth map into a layered paper-cut composite. The node slices the depth map into paper layers, fills those layers with stylized color, and can render stacked shadows, outlines, and small parallax offsets without LoRAs or external styling tools.
 
-## Nodes
+## Node
 
 | Node | Category | Purpose |
 |------|----------|---------|
-| **Depth Rasterize Layers** | `depth/layers` | Main processing node |
-| **Null Depth Model** | `depth/layers` | Placeholder when using `depth_map` only |
-
-Hover any widget or socket on the node for a short tooltip. Full reference below.
+| **Depth Rasterize Layers** | `depth/layers` | Build layer exports, masks, debug previews, or a final paper-cut composite from image + depth. |
 
 ## Installation
 
@@ -22,192 +19,118 @@ pip install -r requirements.txt
 
 Restart ComfyUI.
 
-## Quick workflow
+## Quick Workflow
 
-1. Connect **image** (RGB batch).
-2. Connect **depth_map** (grayscale IMAGE from Depth Anything, etc.) or a **depth_model**.
-3. Set **rasterization_levels** (default 16).
-4. Pick **layer_color_mode** for the look you want (see below).
-5. Choose **output_mode** (`all_layers`, `composite`, etc.).
+1. Connect `image` from your source image or video.
+2. Connect `depth_map` from a depth node such as Depth Anything or Depth Anything V2.
+3. Start with `output_mode = composite` and `rasterization_levels = 12`.
+4. Use `layer_color_mode` to choose the paper style.
+5. Tune shadow distance, blur, and opacity for the stacked-paper depth.
 
-If you only use `depth_map`, connect **Null Depth Model** to `depth_model` when your ComfyUI build requires that socket.
+## Color Styles
 
----
-
-## Layer color modes (depth + color rasterization)
-
-Depth splits the image by distance. **Layer color mode** controls how pixels inside each depth slice are filled:
-
-| Mode | Effect | Best for |
+| Mode | Result | Good for |
 |------|--------|----------|
-| **original** | Keeps per-pixel RGB inside each depth mask | Realistic cutouts, parallax |
-| **flat_average** | Entire depth slice filled with one average color | Minimal paper-cut / silhouette layers |
-| **color_zones** | Within each depth slice, group similar colors and flatten each group to its average (posterization / cel-shading) | Stylized diorama, comic/paper craft |
+| `original` | Keeps source RGB inside each depth slice. | Photo cutouts, subtle parallax. |
+| `flat_average` | Fills each depth layer with one average color. | Minimal paper silhouettes. |
+| `color_zones` | Splits each layer into flat average color patches. | Papercraft, cel-shaded diorama looks. |
+| `grayscale` | Converts each layer to grayscale. | Monochrome paper studies. |
+| `black_white` | Thresholds each layer to pure black or white. | High-contrast stencil and graphic cuts. |
 
-### Color zones (intra-layer posterization)
+Color adjustments are applied after the selected fill style:
 
-When `layer_color_mode = color_zones`, each depth layer is subdivided by color—not by depth again. Example with 4 depth layers and 4 color zones per layer:
+| Control | Default | Description |
+|---------|---------|-------------|
+| `color_brightness` | 0.0 | Adds or removes brightness. |
+| `color_contrast` | 1.0 | Multiplies contrast around mid-gray. |
+| `color_saturation` | 1.0 | Multiplies saturation. |
+| `black_white_threshold` | 0.5 | Luminance cutoff for `black_white`. |
+| `color_zones_per_layer` | 4 | Number of flat patches per depth layer in `color_zones`. |
 
-```text
-Depth layer 0 (near)
-  ├── color zone 0 → flat fill (avg of dark greens in that slice)
-  ├── color zone 1 → flat fill (avg of skin tones)
-  └── …
+## Main Controls
 
-Depth layer 1
-  ├── color zone 0 → flat fill
-  └── …
-```
+| Control | Default | Description |
+|---------|---------|-------------|
+| `rasterization_levels` | 12 | Number of depth slices. More levels add detail; fewer levels look more graphic. |
+| `output_mode` | composite | `composite`, `all_layers`, `single_layer`, `masks_only`, or `debug`. |
+| `selected_layer` | 0 | Layer index for `single_layer` and `masks_only`; 0 is nearest. |
+| `invert_depth` | false | Swap near/far if the depth map is reversed. |
+| `normalization_mode` | per_frame | Use `per_frame` for images, `whole_sequence` for video consistency, or `manual` with min/max. |
+| `depth_min` / `depth_max` | 0 / 1 | Manual normalization range when `normalization_mode = manual`. |
+| `depth_gamma` | 1.0 | Bias how depth values are distributed into layers. |
+| `depth_blur` | 1.0 | Smooth noisy depth before slicing. |
+| `temporal_smoothing` | 0.0 | Reduce frame-to-frame depth flicker in video batches. |
+| `layer_smoothing` | 1.0 | Merge tiny depth specks into cleaner paper shapes. |
+| `mask_feather` | 0.5 | Layer edge softness. Set 0 for crisp hard cuts. |
 
-Think of it as **two-stage rasterization**: first by depth, then by color within each slice. Similar hues merge into flat patches (sky, foliage, clothing) while depth separation is preserved between layers.
+## Paper Effects
 
-**color_zones_per_layer** — how many color patches per depth slice (2–32, default 4). More zones = finer color detail; fewer = bolder poster look.
+| Control | Default | Description |
+|---------|---------|-------------|
+| `enable_shadow` | true | Render drop shadows behind layers in `composite` mode. |
+| `shadow_distance` | 8.0 | Offset distance in pixels. |
+| `shadow_angle` | 135.0 | Shadow direction in degrees. |
+| `shadow_blur` | 6.0 | Shadow softness. |
+| `shadow_opacity` | 0.35 | Shadow strength. |
+| `shadow_color_r/g/b` | 0 / 0 / 0 | Shadow color. |
+| `depth_scaled_shadow` | true | Scale shadow offset by depth for a stronger layered-paper look. |
+| `enable_outline` | false | Draw an edge around layer shapes. |
+| `outline_width` | 2 | Outline thickness in pixels. |
+| `outline_opacity` | 0.5 | Outline strength. |
+| `outline_color_r/g/b` | 0 / 0 / 0 | Outline color. |
+| `enable_layer_offset` | false | Apply a depth-scaled parallax shift to each layer. |
+| `offset_x` / `offset_y` | 0 / 0 | Parallax strength in pixels. |
 
-**color_zone_space** — how pixels are grouped:
-
-- **luminance_chroma** (default) — groups by brightness + saturation. Usually looks more natural (sky vs trees vs shadows).
-- **rgb_cube** — uniform 3D grid in RGB space. More predictable but can merge unlike hues.
-
----
-
-## Parameter reference
-
-### Inputs (sockets)
-
-| Input | Type | Description |
-|-------|------|-------------|
-| **image** | IMAGE | RGB input image or video frame batch. |
-| **depth_model** | DEPTH_MODEL | Optional estimator with `.predict()`. Ignored if `depth_map` is connected. |
-| **depth_map** | IMAGE | Precomputed depth (grayscale). Overrides `depth_model`. |
-| **region_mask** | MASK | Limit rasterization to masked areas. |
-| **background** | IMAGE | Bottom plate for `composite` output mode. |
-
-### Core
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **rasterization_levels** | 16 | Number of depth slices (2–64). |
-| **output_mode** | all_layers | `all_layers`, `single_layer`, `composite`, `masks_only`, `debug`. |
-| **selected_layer** | 0 | Layer index for `single_layer` / `masks_only` (0 = nearest). |
-
-### Depth processing
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **invert_depth** | false | Swap near/far after normalization. |
-| **auto_normalize_depth** | true | Stretch depth to 0–1 automatically. |
-| **depth_min** / **depth_max** | 0 / 1 | Manual range when `normalization_mode = manual`. |
-| **normalization_mode** | per_frame | `per_frame`, `whole_sequence`, `manual`. |
-| **depth_gamma** | 1.0 | Bias depth toward near (>1) or far (<1) layers. |
-| **depth_blur** | 1.0 | Blur raw depth before normalization (large-scale noise). |
-| **temporal_smoothing** | 0.0 | Video: blend depth with previous frame (reduces flicker). |
-| **layer_smoothing** | 0.0 | Smooth layer borders after normalization — blurs fine depth texture before slicing and merges tiny layer specks (hair, foliage, noisy depth). |
-
-### Layer color
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **layer_color_mode** | original | `original`, `flat_average`, `color_zones`. |
-| **color_zones_per_layer** | 4 | Color patches per depth slice (color_zones mode). |
-| **color_zone_space** | luminance_chroma | `luminance_chroma` or `rgb_cube`. |
-
-### Mask controls
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **mask_feather** | 1.0 | Soft edge width between depth layers. |
-| **soft_masks** | true | Soft depth-bin weights vs hard pixels. |
-| **mask_expand** | 0 | Dilate layer masks (pixels). |
-| **mask_erode** | 0 | Erode layer masks (pixels). |
-| **remove_small_islands** | true | Remove tiny speck masks. |
-| **island_min_size** | 32 | Minimum connected area to keep. |
-
-### Composite / effects
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| **layer_order** | near_to_far | Stack order for composite (near on top). |
-| **enable_outline** | false | Draw layer outlines. |
-| **outline_width** | 2 | Outline thickness (px). |
-| **outline_opacity** | 0.75 | Outline strength. |
-| **outline_mode** | outer | `outer`, `inner`, `centered`, `depth_boundary`. |
-| **outline_color_r/g/b** | 0 | Outline RGB (0–1). |
-| **enable_shadow** | false | Drop shadow in composite mode. |
-| **shadow_distance** | 8.0 | Shadow offset (px). |
-| **shadow_angle** | 135.0 | Shadow direction (degrees). |
-| **shadow_blur** | 6.0 | Shadow blur radius. |
-| **shadow_opacity** | 0.35 | Shadow strength. |
-| **shadow_color_r/g/b** | 0 | Shadow RGB (0–1). |
-| **depth_scaled_shadow** | true | Far layers cast longer shadows. |
-| **enable_layer_offset** | false | Parallax shift per layer (composite). |
-| **offset_x** / **offset_y** | 0 | Parallax strength (px). |
-| **offset_mode** | depth_scaled | `uniform`, `depth_scaled`, `manual`. |
-| **manual_offset_x/y** | 0 | Fixed offset when mode is manual. |
-
-### Outputs
+## Outputs
 
 | Output | Description |
 |--------|-------------|
-| **layered_images** | Batch of layer images (`frames × layers` in `all_layers` mode). |
-| **layer_masks** | Matching mask batch. |
-| **depth_quantized** | Posterized grayscale depth per frame. |
-| **composited_image** | Stacked composite when `output_mode = composite` (otherwise empty/black — switch output_mode to composite to use this output). |
-| **debug_preview** | False-color depth layer visualization. |
+| `layered_images` | Layer image batch, or selected/debug images depending on `output_mode`. |
+| `layer_masks` | Alpha masks matching `layered_images`. |
+| `depth_quantized` | Posterized grayscale view of the depth slices. |
+| `composited_image` | Final paper-cut render when `output_mode = composite`. |
+| `debug_preview` | False-color layer ID preview. |
 
-**Smooth layer borders (hair, grass, noisy depth)**
+## Presets
+
+**Papercraft diorama**
 
 ```text
-layer_smoothing = 4
-mask_feather = 1.5
-soft_masks = true
-depth_blur = 1.0
+output_mode = composite
+rasterization_levels = 12
+layer_color_mode = color_zones
+color_zones_per_layer = 4
+enable_shadow = true
+shadow_distance = 8
+shadow_blur = 6
 ```
 
----
-
-## Example presets
-
-**16-layer realistic cutout**
+**Minimal flat paper**
 
 ```text
-rasterization_levels = 16
-layer_color_mode = original
-output_mode = all_layers
-```
-
-**Minimal flat paper layers**
-
-```text
+output_mode = composite
 rasterization_levels = 8
 layer_color_mode = flat_average
-output_mode = composite
-enable_outline = true
+mask_feather = 0
 enable_shadow = true
 ```
 
-**Stylized poster / cel-shaded diorama**
+**Black and white stencil**
 
 ```text
-rasterization_levels = 12
-layer_color_mode = color_zones
-color_zones_per_layer = 6
 output_mode = composite
-enable_outline = true
-outline_width = 2
+layer_color_mode = black_white
+black_white_threshold = 0.5
+enable_outline = false
 ```
 
-**Debug depth separation**
+**Export every cut layer**
 
 ```text
-output_mode = debug
+output_mode = all_layers
 rasterization_levels = 16
+layer_color_mode = original
 ```
-
----
-
-## DEPTH_MODEL integration
-
-Any callable or object with `.predict(images)` returning `[B,H,W]` or `[B,H,W,C]` depth works. In practice, connecting a **depth_map** IMAGE from Depth Anything / Depth Anything V2 is the usual path.
 
 ## Development
 
